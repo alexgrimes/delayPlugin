@@ -69,7 +69,7 @@ private:
     std::array<juce::LinearSmoothedValue<float>, 2> delayFeedbackVolume;
     
     void parameterChanged (const juce::String& parameterID, float newValue) override;
-    juce::AudioProcessorValueTreeState::ParameterLayout createParameters;
+    juce::AudioProcessorValueTreeState::ParameterLayout createParameters();
     
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NewProjectAudioProcessor)

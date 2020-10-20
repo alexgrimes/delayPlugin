@@ -165,8 +165,10 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     
     auto audioBlock = juce::dsp::AudioBlock<float> (buffer).getSubsetChannelBlock(0, (size_t) numChannels);
     
-    const auto& input = context.getInputBlock;
-    const auto& output = context.getOutputBlock;
+    auto context = juce::dsp::ProcessContextReplacing<float> (audioBlock);
+    
+    const auto& input = context.getInputBlock();
+    const auto& output = context.getOutputBlock();
     
     mixer.pushDrySamples (input);
 
@@ -190,7 +192,7 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
             linear.setDelay((float) delayAmount);
             samplesOut[sample] = linear.popSample((int) channel);
             
-            lastDelayOutput[channel] = samplesOut[sample] * delayFeedbackVolume[channel].getNextValue;
+            lastDelayOutput[channel] = samplesOut[sample] * delayFeedbackVolume[channel].getNextValue();
         }
 
         // ..do something to the data...
