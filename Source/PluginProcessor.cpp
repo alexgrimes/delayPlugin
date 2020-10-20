@@ -19,9 +19,12 @@ NewProjectAudioProcessor::NewProjectAudioProcessor()
                       #endif
                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
                      #endif
-                       )
+                       ), apvts (*this, nullptr, "Parameters", createParameters())
 #endif
 {
+    apvts.addParameterListener("RATE", this);
+    apvts.addParameterListener("FEEDBACK", this);
+    apvts.addParameterListener("MIX", this);
 }
 
 NewProjectAudioProcessor::~NewProjectAudioProcessor()
@@ -95,6 +98,20 @@ void NewProjectAudioProcessor::prepareToPlay (double sampleRate, int samplesPerB
 {
     // Use this method as the place to do any pre-playback
     // initialisation that you need..
+    juce::dsp::ProcessSpec spec;
+    spec.maximumBlockSize = samplesPerBlock;
+    spec.sampleRate = sampleRate;
+    
+    delay.prepare (spec);
+    linear.prepare (spec);
+    mixer.prepare (spec);
+    
+    for (auto&volume : delayFeedbackVolume)
+        volume.reset (spec.sampleRate, 0.05);
+    
+    linear.reset();
+    std::fill (lastDelayOutput.begin(), lastDelayOutput.end(), 0.0f);
+    
 }
 
 void NewProjectAudioProcessor::releaseResources()
@@ -132,6 +149,8 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
+    
+    
 
     // In case we have more outputs than inputs, this code clears any output
     // channels that didn't contain input data, (because these aren't
@@ -141,6 +160,15 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // this code if your algorithm always overwrites all the output channels.
     for (auto i = totalNumInputChannels; i < totalNumOutputChannels; ++i)
         buffer.clear (i, 0, buffer.getNumSamples());
+    
+    const auto numChannels = juce::jmax (totalNumInputChannels, totalNumOutputChannels);
+    
+    auto audioBlock = juce::dsp::AudioBlock<float> (buffer).getSubsetChannelBlock(0, (size_t) numChannels);
+    
+    const auto& input = context.getInputBlock;
+    const auto& output = context.getOutputBlock;
+    
+    mixer.pushDrySamples (input);
 
     // This is the place where you'd normally do the guts of your plugin's
     // audio processing...
@@ -150,9 +178,23 @@ void NewProjectAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, j
     // interleaved by keeping the same state.
     for (int channel = 0; channel < totalNumInputChannels; ++channel)
     {
-        auto* channelData = buffer.getWritePointer (channel);
+        auto* samplesIn = input.getChannelPointer (channel);
+        auto* samplesOut = output.getChannelPointer (channel);
+        
+        for (size_t sample = 0; sample < input.getNumSamples(); ++sample)
+        {
+            auto input = samplesIn[sample] - lastDelayOutput[channel];
+            auto delayAmount = delayValue[channel];
+            
+            linear.pushSample (int (channel), input);
+            linear.setDelay((float) delayAmount);
+            samplesOut[sample] = linear.popSample((int) channel);
+            
+            lastDelayOutput[channel] = samplesOut[sample] * delayFeedbackVolume[channel].getNextValue;
+        }
 
         // ..do something to the data...
+        mixer.mixWetSamples (output);
     }
 }
 
@@ -187,3 +229,35 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new NewProjectAudioProcessor();
 }
+
+void NewProjectAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    if (parameterID == "RATE")
+        std::fill (delayValue.begin(), delayValue.end(), newValue / 1000.0 * getSampleRate());
+    
+    if (parameterID == "MIX")
+        mixer.setWetMixProportion (newValue);
+    
+    if (parameterID == "FEEDBACK")
+       {
+           const auto feedbackGain = juce::Decibels::decibelsToGain (newValue, -100.0f);
+           
+           for (auto& volume : delayFeedbackVolume)
+               volume.setTargetValue (feedbackGain);
+       }
+}
+    
+juce::AudioProcessorValueTreeState::ParameterLayout NewProjectAudioProcessor::createParameters()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout params;
+    
+    using Range = juce::NormalisableRange<float>;
+    
+    params.add (std::make_unique<juce::AudioParameterFloat>("RATE", "Rate", 0.01f, 1000.0f, 0));
+    params.add (std::make_unique<juce::AudioParameterFloat>("FEEDBACK", "Feedback", -100.0f, 0.0f, -100.0f));
+    params.add (std::make_unique<juce::AudioParameterFloat>("MIX", "Mix", Range { 0.0f, 1.0f, 0.01f }, 0.0f));
+    
+    return params;
+}
+    
+
